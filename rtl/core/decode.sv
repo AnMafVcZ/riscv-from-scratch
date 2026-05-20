@@ -116,6 +116,7 @@ module decode (
                 auipc = 1;
                 imm = {instr[31:12], 12'b0};
             end
+            default: ;
         endcase
     end
 

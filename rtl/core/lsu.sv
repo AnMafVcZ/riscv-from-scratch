@@ -51,6 +51,7 @@ always_comb begin
                 be = 4'b1111;
                 mem_wdata = rs2_data;
             end
+            default : ;
         endcase
     end
     if (mem_read) begin
@@ -86,6 +87,7 @@ always_comb begin
             else
                 load_data = {{16{1'b0}}, mem_rdata[31:16]};
             end
+            default : ;
         endcase
     end
 end
