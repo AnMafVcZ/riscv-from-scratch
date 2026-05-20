@@ -16,6 +16,8 @@ module decode (
     output logic        branch,
     output logic        jal,
     output logic        jalr,
+    output logic        lui,
+    output logic        auipc,
 
     //sign extended immediate
     output logic [31:0] imm
@@ -36,6 +38,8 @@ module decode (
         jal       = 0;
         jalr      = 0;
         imm       = 32'b0;
+        lui       = 0; 
+        auipc     = 0;
         case(instr[6:0])
             7'b0110011 : // R-type
             begin 
@@ -104,10 +108,12 @@ module decode (
             end
             7'b0110111 : begin // LUI
                 rd_we = 1;
+                lui   = 1;
                 imm = {instr[31:12], 12'b0};
             end
             7'b0010111 : begin //AUIPC
                 rd_we = 1;
+                auipc = 1;
                 imm = {instr[31:12], 12'b0};
             end
         endcase

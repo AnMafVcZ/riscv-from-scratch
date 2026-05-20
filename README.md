@@ -41,3 +41,8 @@ takes in 32 bit instr and then it figures out what each part of that instruction
 `lsu.sv`
 lsu does the reading and writing memory at the byte/halfword/word level, store takes the values and figures out where to write by setting be, and then concatenates it correctly in mem_wdata. load takes in raw 32-bit word form memory taking the byte halfword or word based on the input, the lower bits of addr, 0 and 1 determine if it is a byte or hlafword if that is what is being used.
 
+`rv32i_top.sv`
+wires all four modules together into a complete CPU. Holds the PC register, instruction memory, and data memory. On every clock cycle it fetches an instruction, decodes it, reads registers, runs the ALU, accesses memory if needed, writes the result back, and updates the PC.
+
+Summary 
+A single-cycle RV32I CPU, every instruction completes in one clock cycle. An instruction comes in, decode figures out what to do, the ALU computes the result, the LSU handles any memory access, and the result gets written back to the register file. The PC then moves to the next instruction, a branch target, or a jump target.
