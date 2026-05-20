@@ -37,3 +37,7 @@ takes in 32 bit instr and then it figures out what each part of that instruction
 | JALR   | 1100111 | 1     | 1       | 0        | 0         | 0          | 0      | 0   | 1    |
 | LUI    | 0110111 | 1     | 0       | 0        | 0         | 0          | 0      | 0   | 0    |
 | AUIPC  | 0010111 | 1     | 0       | 0        | 0         | 0          | 0      | 0   | 0    |
+
+`lsu.sv`
+lsu does the reading and writing memory at the byte/halfword/word level, store takes the values and figures out where to write by setting be, and then concatenates it correctly in mem_wdata. load takes in raw 32-bit word form memory taking the byte halfword or word based on the input, the lower bits of addr, 0 and 1 determine if it is a byte or hlafword if that is what is being used.
+
