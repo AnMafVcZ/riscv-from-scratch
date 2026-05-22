@@ -20,6 +20,11 @@ int main(int argc, char** argv) {
         top->clk = 1; top->eval();
     }
 
+    if (top->debug_dmem0 == 8)
+        printf("PASS: dmem[0] = 8\n");
+    else
+        printf("FAIL: dmem[0] = %d\n", top->debug_dmem0);
+
     printf("done\n");
     delete top;
     return 0;

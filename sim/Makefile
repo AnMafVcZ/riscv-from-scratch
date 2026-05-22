@@ -3,7 +3,7 @@ TB  = ../tb/core
 
 verilate:
 	verilator --cc --exe --build -Wall \
-		-Wno-EOFNEWLINE -Wno-UNUSEDSIGNAL -Wno-UNDRIVEN \
+		-Wno-EOFNEWLINE -Wno-UNUSEDSIGNAL -Wno-UNDRIVEN --public \
 		$(RTL)/rv32i_top.sv \
 		$(RTL)/regfile.sv \
 		$(RTL)/alu.sv \

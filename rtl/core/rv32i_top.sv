@@ -1,6 +1,7 @@
 module rv32i_top (
-    input logic clk,
-    input logic reset
+    input  logic        clk,
+    input  logic        reset,
+    output logic [31:0] debug_dmem0
 );
 
 // PC
@@ -38,8 +39,9 @@ end
 
 logic [31:0] imem [0:1023]; // 4KB
 assign instr = imem[pc[11:2]]; // word-addressed, ignore bottom 2 bits
+initial $readmemh("../tests/hello_word.hex", imem);
 
-logic [31:0] dmem [0:1023]; // 4KB
+logic [31:0] dmem [0:1023] /*verilator public*/; // 4KB
 
 always_ff @(posedge clk) begin
     if (mem_write) begin
@@ -129,5 +131,7 @@ assign pc_next = jalr              ? (rs1_data + imm) & ~32'h1 :
 assign alu_a = auipc ? pc :
                lui   ? 32'b0 :
                        rs1_data;
+
+assign debug_dmem0 = dmem[0];
 
 endmodule
