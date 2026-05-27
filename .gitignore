@@ -1,2 +1,4 @@
 claude.md
 sim/obj_dir/
+tests/*.bin
+tests/*.elf

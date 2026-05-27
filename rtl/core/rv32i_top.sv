@@ -9,6 +9,8 @@ typedef struct packed {
     logic [31:0] rs2_data;
     logic [31:0] imm;
     logic [4:0]  rd_addr;
+    logic [4:0]  rs1_addr;
+    logic [4:0]  rs2_addr;
     logic [3:0]  alu_op;
     logic [2:0]  funct3;
     logic        alu_src;
@@ -27,6 +29,7 @@ typedef struct packed {
     logic [31:0] alu_result;
     logic [31:0] rs2_data;
     logic [31:0] pc_branch;
+    logic [31:0] pc_plus4;
     logic [4:0]  rd_addr;
     logic [2:0]  funct3;
     logic        rd_we;
@@ -60,6 +63,245 @@ if_id_t  if_id_reg;
 id_ex_t  id_ex_reg;
 ex_mem_t ex_mem_reg;
 mem_wb_t mem_wb_reg;
+
+// memories
+logic [31:0] imem [0:1023];
+logic [31:0] dmem [0:1023] /*verilator public*/;
+initial $readmemh("../tests/hello_word.hex", imem);
+
+// ── Hazard detection ─────────────────────────────
+logic load_use_stall;
+assign load_use_stall = id_ex_reg.mem_read &&
+                        ((id_ex_reg.rd_addr == id_rs1_addr) ||
+                         (id_ex_reg.rd_addr == id_rs2_addr));
+
+logic flush;
+assign flush = ex_mem_reg.branch_taken | ex_mem_reg.jal | ex_mem_reg.jalr;
+
+
+
+// ── IF ───────────────────────────────────────────
+logic [31:0] pc, pc_next;
+
+always_ff @(posedge clk) begin
+    if (reset) pc <= 32'b0;
+    else if (!load_use_stall) pc <= pc_next;
+end
+
+always_ff @(posedge clk) begin
+    if (reset || flush) if_id_reg <= '0;
+    else if (!load_use_stall) begin
+        if_id_reg.pc    <= pc;
+        if_id_reg.instr <= imem[pc[11:2]];
+    end
+end
+
+// ── ID ───────────────────────────────────────────
+logic [4:0]  id_rs1_addr, id_rs2_addr, id_rd_addr;
+logic [3:0]  id_alu_op;
+logic [2:0]  id_funct3;
+logic        id_alu_src, id_rd_we, id_mem_read, id_mem_write, id_mem_to_reg;
+logic        id_branch, id_jal, id_jalr, id_lui, id_auipc;
+logic [31:0] id_imm;
+logic [31:0] id_rs1_data, id_rs2_data;
+
+decode u_decode (
+    .instr      (if_id_reg.instr),
+    .rs1_addr   (id_rs1_addr),
+    .rs2_addr   (id_rs2_addr),
+    .rd_addr    (id_rd_addr),
+    .alu_op     (id_alu_op),
+    .alu_src    (id_alu_src),
+    .rd_we      (id_rd_we),
+    .mem_read   (id_mem_read),
+    .mem_write  (id_mem_write),
+    .mem_to_reg (id_mem_to_reg),
+    .branch     (id_branch),
+    .jal        (id_jal),
+    .jalr       (id_jalr),
+    .imm        (id_imm),
+    .lui        (id_lui),
+    .auipc      (id_auipc)
+);
+
+regfile u_regfile (
+    .clk      (clk),
+    .rs1_addr (id_rs1_addr),
+    .rs2_addr (id_rs2_addr),
+    .rd_addr  (mem_wb_reg.rd_addr),
+    .rd_data  (wb_rd_data),
+    .rd_we    (mem_wb_reg.rd_we),
+    .rs1_data (id_rs1_data),
+    .rs2_data (id_rs2_data)
+);
+
+always_ff @(posedge clk) begin
+    if (reset || load_use_stall || flush) id_ex_reg <= '0;
+    else begin
+        id_ex_reg.pc         <= if_id_reg.pc;
+        id_ex_reg.rs1_data   <= id_rs1_data;
+        id_ex_reg.rs2_data   <= id_rs2_data;
+        id_ex_reg.imm        <= id_imm;
+        id_ex_reg.rd_addr    <= id_rd_addr;
+        id_ex_reg.rs1_addr   <= id_rs1_addr;
+        id_ex_reg.rs2_addr   <= id_rs2_addr;
+        id_ex_reg.alu_op     <= id_alu_op;
+        id_ex_reg.funct3     <= if_id_reg.instr[14:12];
+        id_ex_reg.alu_src    <= id_alu_src;
+        id_ex_reg.rd_we      <= id_rd_we;
+        id_ex_reg.mem_read   <= id_mem_read;
+        id_ex_reg.mem_write  <= id_mem_write;
+        id_ex_reg.mem_to_reg <= id_mem_to_reg;
+        id_ex_reg.branch     <= id_branch;
+        id_ex_reg.jal        <= id_jal;
+        id_ex_reg.jalr       <= id_jalr;
+        id_ex_reg.lui        <= id_lui;
+        id_ex_reg.auipc      <= id_auipc;
+    end
+end
+
+// ── EX ───────────────────────────────────────────
+logic [31:0] ex_alu_a, ex_alu_b, ex_alu_result;
+logic        ex_branch_taken;
+
+// forwarding mux selects: 00=normal, 10=EX/MEM, 01=MEM/WB
+logic [1:0] forwardA, forwardB;
+
+always_comb begin
+    forwardA = 2'b00;
+    forwardB = 2'b00;
+
+    // EX/MEM forward (higher priority)
+    if (ex_mem_reg.rd_we && ex_mem_reg.rd_addr != 0 &&
+        ex_mem_reg.rd_addr == id_ex_reg.rs1_addr)
+        forwardA = 2'b10;
+
+    if (ex_mem_reg.rd_we && ex_mem_reg.rd_addr != 0 &&
+        ex_mem_reg.rd_addr == id_ex_reg.rs2_addr)
+        forwardB = 2'b10;
+
+    // MEM/WB forward (lower priority, only if EX/MEM didn't match)
+    if (mem_wb_reg.rd_we && mem_wb_reg.rd_addr != 0 &&
+        mem_wb_reg.rd_addr == id_ex_reg.rs1_addr && forwardA == 2'b00)
+        forwardA = 2'b01;
+
+    if (mem_wb_reg.rd_we && mem_wb_reg.rd_addr != 0 &&
+        mem_wb_reg.rd_addr == id_ex_reg.rs2_addr && forwardB == 2'b00)
+        forwardB = 2'b01;
+end
+
+logic [31:0] ex_rs1_fwd, ex_rs2_fwd;
+
+assign ex_rs1_fwd = forwardA == 2'b10 ? ex_mem_reg.alu_result :
+                    forwardA == 2'b01 ? wb_rd_data            :
+                                        id_ex_reg.rs1_data;
+
+assign ex_rs2_fwd = forwardB == 2'b10 ? ex_mem_reg.alu_result :
+                    forwardB == 2'b01 ? wb_rd_data            :
+                                        id_ex_reg.rs2_data;
+
+assign ex_alu_a = id_ex_reg.auipc ? id_ex_reg.pc :
+                  id_ex_reg.lui   ? 32'b0         :
+                                    ex_rs1_fwd;
+
+assign ex_alu_b = id_ex_reg.alu_src ? id_ex_reg.imm : ex_rs2_fwd;
+
+
+alu u_alu (
+    .a      (ex_alu_a),
+    .b      (ex_alu_b),
+    .op     (id_ex_reg.alu_op),
+    .result (ex_alu_result)
+);
+
+always_comb begin
+    case (id_ex_reg.funct3)
+        3'b000: ex_branch_taken = (id_ex_reg.rs1_data == id_ex_reg.rs2_data);
+        3'b001: ex_branch_taken = (id_ex_reg.rs1_data != id_ex_reg.rs2_data);
+        3'b100: ex_branch_taken = ($signed(id_ex_reg.rs1_data) < $signed(id_ex_reg.rs2_data));
+        3'b101: ex_branch_taken = ($signed(id_ex_reg.rs1_data) >= $signed(id_ex_reg.rs2_data));
+        3'b110: ex_branch_taken = (id_ex_reg.rs1_data < id_ex_reg.rs2_data);
+        3'b111: ex_branch_taken = (id_ex_reg.rs1_data >= id_ex_reg.rs2_data);
+        default: ex_branch_taken = 0;
+    endcase
+end
+
+always_ff @(posedge clk) begin
+    if (reset) ex_mem_reg <= '0;
+    else begin
+        ex_mem_reg.alu_result   <= ex_alu_result;
+        ex_mem_reg.rs2_data     <= ex_rs2_fwd;
+        ex_mem_reg.pc_branch    <= id_ex_reg.pc + id_ex_reg.imm;
+        ex_mem_reg.pc_plus4     <= id_ex_reg.pc + 32'd4;
+        ex_mem_reg.rd_addr      <= id_ex_reg.rd_addr;
+        ex_mem_reg.funct3       <= id_ex_reg.funct3;
+        ex_mem_reg.rd_we        <= id_ex_reg.rd_we;
+        ex_mem_reg.mem_read     <= id_ex_reg.mem_read;
+        ex_mem_reg.mem_write    <= id_ex_reg.mem_write;
+        ex_mem_reg.mem_to_reg   <= id_ex_reg.mem_to_reg;
+        ex_mem_reg.branch_taken <= id_ex_reg.branch & ex_branch_taken;
+        ex_mem_reg.jal          <= id_ex_reg.jal;
+        ex_mem_reg.jalr         <= id_ex_reg.jalr;
+    end
+end
+
+// ── MEM ──────────────────────────────────────────
+logic [31:0] mem_rdata;
+logic [31:0] mem_load_data;
+logic [3:0]  mem_be;
+logic [31:0] mem_wdata;
+
+lsu u_lsu (
+    .rs2_data  (ex_mem_reg.rs2_data),
+    .funct3    (ex_mem_reg.funct3),
+    .addr      (ex_mem_reg.alu_result),
+    .mem_write (ex_mem_reg.mem_write),
+    .mem_read  (ex_mem_reg.mem_read),
+    .mem_wdata (mem_wdata),
+    .mem_rdata (mem_rdata),
+    .be        (mem_be),
+    .load_data (mem_load_data)
+);
+
+assign mem_rdata = dmem[ex_mem_reg.alu_result[11:2]];
+
+always_ff @(posedge clk) begin
+    if (ex_mem_reg.mem_write) begin
+        if (mem_be[0]) dmem[ex_mem_reg.alu_result[11:2]][7:0]   <= mem_wdata[7:0];
+        if (mem_be[1]) dmem[ex_mem_reg.alu_result[11:2]][15:8]  <= mem_wdata[15:8];
+        if (mem_be[2]) dmem[ex_mem_reg.alu_result[11:2]][23:16] <= mem_wdata[23:16];
+        if (mem_be[3]) dmem[ex_mem_reg.alu_result[11:2]][31:24] <= mem_wdata[31:24];
+    end
+end
+
+always_ff @(posedge clk) begin
+    if (reset) mem_wb_reg <= '0;
+    else begin
+        mem_wb_reg.alu_result <= ex_mem_reg.alu_result;
+        mem_wb_reg.load_data  <= mem_load_data;
+        mem_wb_reg.pc_plus4   <= ex_mem_reg.pc_branch - ex_mem_reg.alu_result + ex_mem_reg.alu_result; // placeholder
+        mem_wb_reg.rd_addr    <= ex_mem_reg.rd_addr;
+        mem_wb_reg.rd_we      <= ex_mem_reg.rd_we;
+        mem_wb_reg.mem_to_reg <= ex_mem_reg.mem_to_reg;
+        mem_wb_reg.jal        <= ex_mem_reg.jal;
+        mem_wb_reg.jalr       <= ex_mem_reg.jalr;
+    end
+end
+
+// ── WB ───────────────────────────────────────────
+logic [31:0] wb_rd_data;
+
+assign wb_rd_data = mem_wb_reg.jal | mem_wb_reg.jalr ? mem_wb_reg.pc_plus4  :
+                    mem_wb_reg.mem_to_reg             ? mem_wb_reg.load_data :
+                                                        mem_wb_reg.alu_result;
+
+// ── PC next ───────────────────────────────────────
+assign pc_next = ex_mem_reg.jalr         ? ex_mem_reg.alu_result & ~32'h1 :
+                 ex_mem_reg.jal          ? ex_mem_reg.pc_branch            :
+                 ex_mem_reg.branch_taken ? ex_mem_reg.pc_branch            :
+                                           pc + 4;
+
+assign debug_dmem0 = dmem[0];
 
 
 
