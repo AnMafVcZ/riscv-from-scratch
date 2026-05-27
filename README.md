@@ -46,3 +46,27 @@ wires all four modules together into a complete CPU. Holds the PC register, inst
 
 Summary 
 A single-cycle RV32I CPU, every instruction completes in one clock cycle. An instruction comes in, decode figures out what to do, the ALU computes the result, the LSU handles any memory access, and the result gets written back to the register file. The PC then moves to the next instruction, a branch target, or a jump target.
+
+# Stage 2
+Converting the single-cycle CPU into a 5-stage pipeline: IF → ID → EX → MEM → WB. Instead of one instruction per cycle taking the full path, multiple instructions run simultaneously — each in a different stage.
+
+Pipeline registers sit between each stage and hold the outputs so the next stage can read them on the following cycle without getting clobbered by the next instruction coming in behind it.
+
+`rv32i_top.sv` (rewritten)
+The top level now defines four pipeline register structs (`if_id_t`, `id_ex_t`, `ex_mem_t`, `mem_wb_t`) and implements all five stages. Each stage reads from the register behind it, does its work, and writes into the register in front of it on the rising clock edge.
+
+**Forwarding**
+Without forwarding, an instruction that writes a register can't be read by the next instruction until writeback completes three cycles later. Forwarding detects when EX needs a value that's already computed but not yet written back, and routes it directly:
+- EX/MEM forward — result from one instruction ago fed directly into EX inputs
+- MEM/WB forward — result from two instructions ago fed into EX inputs
+
+`forwardA` and `forwardB` are 2-bit mux selects: `00` = use register file value, `10` = forward from EX/MEM, `01` = forward from MEM/WB.
+
+**Load-use stall**
+Forwarding can't fix a load followed immediately by a dependent instruction — the load result doesn't exist until after the MEM stage, which is the same cycle as the next instruction's EX. One stall cycle is inserted: the PC and IF/ID register freeze, and a bubble (all-zero control signals) is injected into ID/EX. The load result is then available via MEM/WB forwarding one cycle later.
+
+**Branch flush**
+Branch targets are resolved in EX. By then two wrong instructions have entered the pipeline behind the branch. When a branch is taken, both IF/ID and ID/EX are zeroed out (flushed) on the next cycle, discarding the wrong instructions.
+
+Summary
+A 5-stage pipelined RV32I CPU with full hazard handling. Back-to-back dependent instructions work without any NOPs thanks to forwarding. Load-use hazards are handled with a one-cycle stall. Taken branches flush two pipeline stages and redirect the PC to the correct target.
