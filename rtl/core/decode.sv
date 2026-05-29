@@ -20,7 +20,14 @@ module decode (
     output logic        auipc,
 
     //sign extended immediate
-    output logic [31:0] imm
+    output logic [31:0] imm,
+
+    output logic [11:0] csr_addr,   // instr[31:20]
+    output logic [1:0]  csr_op,     // 00=none, 01=csrrw, 10=csrrs, 11=csrrc
+    output logic        csr_use_imm,// 1 = zimm variant (csrrwi/csrrsi/csrrci)
+    output logic        is_ecall,
+    output logic        is_mret
+
 );
 
     assign rs1_addr = instr[19:15];
@@ -40,6 +47,11 @@ module decode (
         imm       = 32'b0;
         lui       = 0; 
         auipc     = 0;
+        csr_addr    = 12'b0;
+        csr_op      = 2'b0;
+        csr_use_imm = 0;
+        is_ecall    = 0;
+        is_mret     = 0;
         case(instr[6:0])
             7'b0110011 : // R-type
             begin 
@@ -116,6 +128,23 @@ module decode (
                 auipc = 1;
                 imm = {instr[31:12], 12'b0};
             end
+            7'b1110011 : begin // SYSTEM
+                csr_addr = instr[31:20];
+                case (instr[14:12])
+                    3'b001: begin csr_op = 2'd1; rd_we = 1; end // csrrw
+                    3'b010: begin csr_op = 2'd2; rd_we = 1; end // csrrs
+                    3'b011: begin csr_op = 2'd3; rd_we = 1; end // csrrc
+                    3'b101: begin csr_op = 2'd1; rd_we = 1; csr_use_imm = 1; end // csrrwi
+                    3'b110: begin csr_op = 2'd2; rd_we = 1; csr_use_imm = 1; end // csrrsi
+                    3'b111: begin csr_op = 2'd3; rd_we = 1; csr_use_imm = 1; end // csrrci
+                    3'b000: begin
+                        if (instr[31:20] == 12'h000) is_ecall = 1;      // ecall
+                        if (instr[31:20] == 12'h302) is_mret  = 1;      // mret
+                    end
+                    default: ;
+                endcase
+            end
+
             default: ;
         endcase
     end
