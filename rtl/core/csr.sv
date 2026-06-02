@@ -22,14 +22,19 @@ module csr (
 
     // trap output (to PC mux)
     output logic [31:0] mtvec_out,
-    output logic [31:0] mepc_out
+    output logic [31:0] mepc_out,
+    output logic        irq_timer
 );
     logic [31:0] mstatus_r, mie_r, mtvec_r, mscratch_r;
     logic [31:0] mepc_r, mcause_r, mtval_r, mip_r;
-    logic [63:0] cycle_r, instret_r;
+    logic [63:0] mtime_r, mtimecmp_r, instret_r;
+
     always_comb begin
         case (raddr)
-            12'h300: rdata = mstatus_r;
+            12'hC00: rdata = mtime_r[31:0];
+            12'hC80: rdata = mtime_r[63:32];
+            12'h321: rdata = mtimecmp_r[31:0];
+            12'h322: rdata = mtimecmp_r[63:32];
             12'h304: rdata = mie_r;
             12'h305: rdata = mtvec_r;
             12'h340: rdata = mscratch_r;
@@ -37,8 +42,7 @@ module csr (
             12'h342: rdata = mcause_r;
             12'h343: rdata = mtval_r;
             12'h344: rdata = mip_r;
-            12'hF14: rdata = 32'h0;          // mhartid always 0
-            12'hC00: rdata = cycle_r[31:0];
+            12'hF14: rdata = 32'h0;
             12'hC02: rdata = instret_r[31:0];
             default: rdata = 32'h0;
         endcase
@@ -54,10 +58,13 @@ module csr (
             mcause_r   <= 32'h0;
             mtval_r    <= 32'h0;
             mip_r      <= 32'h0;
-            cycle_r    <= 64'h0;
+            mtime_r    <= 64'h0;
+            mtimecmp_r <= 64'hFFFFFFFFFFFFFFFF;
             instret_r  <= 64'h0;
         end else begin
-            cycle_r <= cycle_r + 1;
+            mtime_r  <= mtime_r + 1;
+            mip_r[7] <= (mtime_r + 1 >= mtimecmp_r);
+
 
             if (trap) begin
                 mepc_r          <= trap_pc;
@@ -74,7 +81,9 @@ module csr (
                     12'h304: mie_r      <= wop==2'd1 ? wdata : wop==2'd2 ? mie_r|wdata      : mie_r&~wdata;
                     12'h305: mtvec_r    <= wop==2'd1 ? wdata : wop==2'd2 ? mtvec_r|wdata    : mtvec_r&~wdata;
                     12'h340: mscratch_r <= wop==2'd1 ? wdata : wop==2'd2 ? mscratch_r|wdata : mscratch_r&~wdata;
-                    12'h341: mepc_r     <= wop==2'd1 ? wdata : wop==2'd2 ? mepc_r|wdata     : mepc_r&~wdata;
+                    12'h341: mepc_r           <= wop==2'd1 ? wdata : wop==2'd2 ? mepc_r|wdata             : mepc_r&~wdata;
+                    12'h321: mtimecmp_r[31:0]  <= wop==2'd1 ? wdata : wop==2'd2 ? mtimecmp_r[31:0]|wdata  : mtimecmp_r[31:0]&~wdata;
+                    12'h322: mtimecmp_r[63:32] <= wop==2'd1 ? wdata : wop==2'd2 ? mtimecmp_r[63:32]|wdata : mtimecmp_r[63:32]&~wdata;
                     default: ;
                 endcase
             end
@@ -86,4 +95,5 @@ module csr (
     assign mtvec_out = mtvec_r;
     assign mepc_out  = mepc_r;
 
+    assign irq_timer = mip_r[7] & mie_r[7] & mstatus_r[3];
 endmodule

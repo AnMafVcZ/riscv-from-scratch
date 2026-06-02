@@ -26,8 +26,8 @@ module decode (
     output logic [1:0]  csr_op,     // 00=none, 01=csrrw, 10=csrrs, 11=csrrc
     output logic        csr_use_imm,// 1 = zimm variant (csrrwi/csrrsi/csrrci)
     output logic        is_ecall,
-    output logic        is_mret
-
+    output logic        is_mret,
+    output logic        is_illegal
 );
 
     assign rs1_addr = instr[19:15];
@@ -52,6 +52,7 @@ module decode (
         csr_use_imm = 0;
         is_ecall    = 0;
         is_mret     = 0;
+        is_illegal  = 0;
         case(instr[6:0])
             7'b0110011 : // R-type
             begin 
@@ -141,11 +142,11 @@ module decode (
                         if (instr[31:20] == 12'h000) is_ecall = 1;      // ecall
                         if (instr[31:20] == 12'h302) is_mret  = 1;      // mret
                     end
-                    default: ;
+                    default: is_illegal = 1;
                 endcase
             end
 
-            default: ;
+            default: is_illegal = (instr[1:0] == 2'b11);
         endcase
     end
 

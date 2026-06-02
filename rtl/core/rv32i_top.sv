@@ -23,6 +23,13 @@ typedef struct packed {
     logic        jalr;
     logic        lui;
     logic        auipc;
+    logic [11:0] csr_addr;
+    logic [1:0]  csr_op;
+    logic        csr_use_imm;
+    logic        is_ecall;
+    logic        is_mret;
+    logic [31:0] raw_instr;
+    logic        is_illegal;
 } id_ex_t;
 
 typedef struct packed {
@@ -39,6 +46,8 @@ typedef struct packed {
     logic        branch_taken;
     logic        jal;
     logic        jalr;
+    logic [31:0] csr_rdata;
+    logic        is_csr;
 } ex_mem_t;
 
 typedef struct packed {
@@ -50,6 +59,8 @@ typedef struct packed {
     logic        mem_to_reg;
     logic        jal;
     logic        jalr;
+    logic [31:0] csr_rdata;
+    logic        is_csr;
 } mem_wb_t;
 
 module rv32i_top (
@@ -76,7 +87,11 @@ assign load_use_stall = id_ex_reg.mem_read &&
                          (id_ex_reg.rd_addr == id_rs2_addr));
 
 logic flush;
-assign flush = ex_mem_reg.branch_taken | ex_mem_reg.jal | ex_mem_reg.jalr;
+assign flush = ex_mem_reg.branch_taken | ex_mem_reg.jal | ex_mem_reg.jalr | trap_flush;
+
+logic trap_flush;
+assign trap_flush = id_ex_reg.is_ecall | id_ex_reg.is_mret | id_ex_reg.is_illegal | take_irq;
+
 
 
 
@@ -104,6 +119,13 @@ logic        id_alu_src, id_rd_we, id_mem_read, id_mem_write, id_mem_to_reg;
 logic        id_branch, id_jal, id_jalr, id_lui, id_auipc;
 logic [31:0] id_imm;
 logic [31:0] id_rs1_data, id_rs2_data;
+logic [11:0] id_csr_addr;
+logic [1:0]  id_csr_op;
+logic        id_csr_use_imm;
+logic        id_is_ecall;
+logic        id_is_mret;
+logic        id_is_illegal;
+
 
 decode u_decode (
     .instr      (if_id_reg.instr),
@@ -121,7 +143,13 @@ decode u_decode (
     .jalr       (id_jalr),
     .imm        (id_imm),
     .lui        (id_lui),
-    .auipc      (id_auipc)
+    .auipc      (id_auipc),
+    .csr_addr   (id_csr_addr),
+    .csr_op     (id_csr_op),
+    .csr_use_imm(id_csr_use_imm),
+    .is_ecall   (id_is_ecall),
+    .is_mret    (id_is_mret),
+    .is_illegal  (id_is_illegal)
 );
 
 regfile u_regfile (
@@ -157,6 +185,13 @@ always_ff @(posedge clk) begin
         id_ex_reg.jalr       <= id_jalr;
         id_ex_reg.lui        <= id_lui;
         id_ex_reg.auipc      <= id_auipc;
+        id_ex_reg.csr_addr    <= id_csr_addr;
+        id_ex_reg.csr_op      <= id_csr_op;
+        id_ex_reg.csr_use_imm <= id_csr_use_imm;
+        id_ex_reg.is_ecall    <= id_is_ecall;
+        id_ex_reg.is_mret     <= id_is_mret;
+        id_ex_reg.raw_instr  <= if_id_reg.instr;
+        id_ex_reg.is_illegal <= id_is_illegal;
     end
 end
 
@@ -214,6 +249,42 @@ alu u_alu (
     .result (ex_alu_result)
 );
 
+// CSR
+logic [31:0] ex_csr_wdata, ex_csr_rdata;
+logic [31:0] ex_mtvec, ex_mepc;
+logic        ex_trap;
+logic        ex_irq_timer;
+logic        take_irq;
+
+logic [31:0] ex_trap_cause, ex_trap_val;
+logic        ex_exception;
+assign ex_csr_wdata  = id_ex_reg.csr_use_imm ? {27'b0, id_ex_reg.rs1_addr} : ex_rs1_fwd;
+assign ex_exception  = id_ex_reg.is_ecall | id_ex_reg.is_illegal;
+assign take_irq      = ex_irq_timer & !ex_exception;
+assign ex_trap       = ex_exception | take_irq;
+assign ex_trap_cause = take_irq             ? 32'h80000007 :
+                       id_ex_reg.is_ecall   ? 32'd11       : 32'd2;
+assign ex_trap_val   = id_ex_reg.is_illegal ? id_ex_reg.raw_instr : 32'd0;
+csr u_csr (
+    .clk        (clk),
+    .reset      (reset),
+    .raddr      (id_ex_reg.csr_addr),
+    .rdata      (ex_csr_rdata),
+    .waddr      (id_ex_reg.csr_addr),
+    .wdata      (ex_csr_wdata),
+    .wop        (id_ex_reg.csr_op),
+    .trap       (ex_trap),
+    .trap_pc    (id_ex_reg.pc),
+    .trap_cause (ex_trap_cause),
+    .trap_val   (ex_trap_val),
+    .mret       (id_ex_reg.is_mret),
+    .mtvec_out  (ex_mtvec),
+    .mepc_out   (ex_mepc),
+    .irq_timer  (ex_irq_timer)
+
+);
+
+
 always_comb begin
     case (id_ex_reg.funct3)
         3'b000: ex_branch_taken = (id_ex_reg.rs1_data == id_ex_reg.rs2_data);
@@ -238,6 +309,8 @@ always_ff @(posedge clk) begin
         ex_mem_reg.rd_we        <= id_ex_reg.rd_we;
         ex_mem_reg.mem_read     <= id_ex_reg.mem_read;
         ex_mem_reg.mem_write    <= id_ex_reg.mem_write;
+        ex_mem_reg.csr_rdata <= ex_csr_rdata;
+        ex_mem_reg.is_csr    <= (id_ex_reg.csr_op != 2'b00);
         ex_mem_reg.mem_to_reg   <= id_ex_reg.mem_to_reg;
         ex_mem_reg.branch_taken <= id_ex_reg.branch & ex_branch_taken;
         ex_mem_reg.jal          <= id_ex_reg.jal;
@@ -278,6 +351,8 @@ always_ff @(posedge clk) begin
     if (reset) mem_wb_reg <= '0;
     else begin
         mem_wb_reg.alu_result <= ex_mem_reg.alu_result;
+        mem_wb_reg.csr_rdata <= ex_mem_reg.csr_rdata;
+        mem_wb_reg.is_csr    <= ex_mem_reg.is_csr;
         mem_wb_reg.load_data  <= mem_load_data;
         mem_wb_reg.pc_plus4   <= ex_mem_reg.pc_branch - ex_mem_reg.alu_result + ex_mem_reg.alu_result; // placeholder
         mem_wb_reg.rd_addr    <= ex_mem_reg.rd_addr;
@@ -292,14 +367,16 @@ end
 logic [31:0] wb_rd_data;
 
 assign wb_rd_data = mem_wb_reg.jal | mem_wb_reg.jalr ? mem_wb_reg.pc_plus4  :
+                    mem_wb_reg.is_csr                 ? mem_wb_reg.csr_rdata :
                     mem_wb_reg.mem_to_reg             ? mem_wb_reg.load_data :
                                                         mem_wb_reg.alu_result;
-
 // ── PC next ───────────────────────────────────────
-assign pc_next = ex_mem_reg.jalr         ? ex_mem_reg.alu_result & ~32'h1 :
-                 ex_mem_reg.jal          ? ex_mem_reg.pc_branch            :
+assign pc_next = trap_flush & id_ex_reg.is_mret                                      ? ex_mepc  :
+                 trap_flush & (id_ex_reg.is_ecall | id_ex_reg.is_illegal | take_irq) ? ex_mtvec :
+                 ex_mem_reg.jalr         ? ex_mem_reg.alu_result & ~32'h1 :
+                 ex_mem_reg.jal         ? ex_mem_reg.pc_branch            :
                  ex_mem_reg.branch_taken ? ex_mem_reg.pc_branch            :
-                                           pc + 4;
+                                          pc + 4;
 
 assign debug_dmem0 = dmem[0];
 

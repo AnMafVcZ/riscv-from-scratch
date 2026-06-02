@@ -9,6 +9,7 @@ verilate:
 		$(RTL)/alu.sv \
 		$(RTL)/decode.sv \
 		$(RTL)/lsu.sv \
+		$(RTL)/csr.sv \
 		$(TB)/tb_core.cpp \
 		--top-module rv32i_top \
 		-o sim_rv32i

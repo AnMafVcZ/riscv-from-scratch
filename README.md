@@ -70,3 +70,40 @@ Branch targets are resolved in EX. By then two wrong instructions have entered t
 
 Summary
 A 5-stage pipelined RV32I CPU with full hazard handling. Back-to-back dependent instructions work without any NOPs thanks to forwarding. Load-use hazards are handled with a one-cycle stall. Taken branches flush two pipeline stages and redirect the PC to the correct target.
+
+# Stage 3
+Adding M-mode privileged hardware: CSR registers, trap handling, and timer interrupts. This is what lets the CPU run an operating system — without it there's no way to handle syscalls, recover from faults, or schedule processes.
+
+`csr.sv`
+A new module holding all privileged state. Implements two ports: a combinational read port (any instruction can read a CSR in EX) and a clocked write port. On a trap it atomically saves mepc/mcause/mtval and clears MIE. On mret it restores MIE from MPIE.
+
+| CSR | Address | Purpose |
+|---|---|---|
+| mstatus | 0x300 | Global interrupt enable (MIE bit 3, MPIE bit 7) |
+| mie | 0x304 | Per-source interrupt enable (bit 7 = timer) |
+| mtvec | 0x305 | Trap handler base address |
+| mscratch | 0x340 | Scratch register for trap handlers |
+| mepc | 0x341 | PC saved on trap, restored by mret |
+| mcause | 0x342 | Why the trap happened (bit 31 = interrupt) |
+| mtval | 0x343 | Extra info (bad address or illegal instruction word) |
+| mip | 0x344 | Pending interrupts (bit 7 = MTIP) |
+| mhartid | 0xF14 | Hardware thread ID, always 0 |
+| mtime | 0xC00/0xC80 | 64-bit cycle counter, auto-increments |
+| mtimecmp | 0x321/0x322 | Timer compare value, triggers interrupt when mtime >= mtimecmp |
+
+`decode.sv` (updated)
+Added SYSTEM opcode (0x73) decoding. Recognises csrrw/csrrs/csrrc and their immediate variants, ecall, mret, and illegal instructions. Unknown opcodes with bits [1:0]=11 set is_illegal.
+
+`rv32i_top.sv` (updated)
+Three new trap sources wired into the pipeline, all resolved in the EX stage:
+- **ecall** — software trap, mcause=11, redirects PC to mtvec
+- **Illegal instruction** — unknown opcode, mcause=2, mtval=bad instruction word
+- **Timer interrupt** — fires when mtime >= mtimecmp and interrupts are enabled, mcause=0x80000007
+
+All three use the same flush mechanism as branch: IF/ID and ID/EX are zeroed, PC redirects to mtvec. mret does the reverse: flushes the two stages and redirects PC to mepc.
+
+**CSR instructions**
+csrrw/csrrs/csrrc read the old CSR value into rd and write a new value. The result flows through EX/MEM → MEM/WB and writes back normally via the register file. The is_csr flag in the pipeline structs routes csr_rdata through the WB mux instead of alu_result.
+
+Summary
+An M-mode capable RV32I CPU. The processor can now take ecall traps (OS syscalls), detect and trap illegal instructions, handle timer interrupts, and return from trap handlers with mret. This is the minimum needed to run bare-metal firmware and eventually boot an OS.
