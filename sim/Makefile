@@ -1,6 +1,10 @@
 RTL = ../rtl/core
 TB  = ../tb/core
 
+TEST     ?= hello
+EXPECTED ?= 8
+ARGS     ?=
+
 verilate:
 	verilator --cc --exe --build -Wall \
 		-Wno-EOFNEWLINE -Wno-UNUSEDSIGNAL -Wno-UNDRIVEN --public \
@@ -15,7 +19,7 @@ verilate:
 		-o sim_rv32i
 
 run: verilate
-	./obj_dir/sim_rv32i
+	./obj_dir/sim_rv32i +HEX=../tests/$(TEST)_word.hex +EXPECTED=$(EXPECTED) $(ARGS)
 
 clean:
 	rm -rf obj_dir

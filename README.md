@@ -107,3 +107,27 @@ csrrw/csrrs/csrrc read the old CSR value into rd and write a new value. The resu
 
 Summary
 An M-mode capable RV32I CPU. The processor can now take ecall traps (OS syscalls), detect and trap illegal instructions, handle timer interrupts, and return from trap handlers with mret. This is the minimum needed to run bare-metal firmware and eventually boot an OS.
+
+# Simulation & Testing
+
+**Running tests**
+```bash
+make run TEST=hello EXPECTED=8
+make run TEST=load_use_test EXPECTED=8
+make run TEST=branch_test EXPECTED=8
+```
+
+`TEST` selects which `_word.hex` file to load. `EXPECTED` is the value checked against `dmem[0]` after 10000 cycles.
+
+**Cycle-by-cycle trace**
+Add `ARGS="+TRACE"` to any run to print one line per clock cycle showing every pipeline stage:
+```bash
+make run TEST=hello EXPECTED=8 ARGS="+TRACE"
+```
+
+Output format:
+```
+[cycle] IF=<PC> | ID=<PC>:<instr> | EX=<PC> | MEM=addr=<addr> rw=<read><write> | WB=x<rd>=<val> we=<1/0> | STALL/FLUSH
+```
+
+Each column is one pipeline stage. You can watch instructions flow left to right across stages each cycle, see stall bubbles freeze the front of the pipeline, and see FLUSH discard wrong instructions after a branch or trap.

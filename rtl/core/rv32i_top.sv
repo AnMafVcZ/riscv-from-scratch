@@ -78,7 +78,12 @@ mem_wb_t mem_wb_reg;
 // memories
 logic [31:0] imem [0:1023];
 logic [31:0] dmem [0:1023] /*verilator public*/;
-initial $readmemh("../tests/hello_word.hex", imem);
+initial begin
+    string hex_file;
+    if (!$value$plusargs("HEX=%s", hex_file))
+        hex_file = "../tests/hello_word.hex";
+    $readmemh(hex_file, imem);
+end
 
 // ── Hazard detection ─────────────────────────────
 logic load_use_stall;
@@ -380,6 +385,27 @@ assign pc_next = trap_flush & id_ex_reg.is_mret                                 
 
 assign debug_dmem0 = dmem[0];
 
+`ifdef VERILATOR
+integer cycle_count;
+always @(posedge clk) begin
+    if (reset) cycle_count <= 0;
+    else       cycle_count <= cycle_count + 1;
+end
 
+always @(posedge clk) begin
+    if (!reset && $test$plusargs("TRACE")) begin
+        $display("[%4d] IF=%08h | ID=%08h:%08h | EX=%08h | MEM=addr=%08h rw=%b%b | WB=x%02d=%08h we=%b | %s%s",
+            cycle_count,
+            pc,
+            if_id_reg.pc, if_id_reg.instr,
+            id_ex_reg.pc,
+            ex_mem_reg.alu_result, ex_mem_reg.mem_read, ex_mem_reg.mem_write,
+            mem_wb_reg.rd_addr, wb_rd_data, mem_wb_reg.rd_we,
+            load_use_stall ? "STALL " : "      ",
+            flush          ? "FLUSH"  : ""
+        );
+    end
+end
+`endif
 
 endmodule
